@@ -1,9 +1,9 @@
 from __future__ import annotations
 from datetime import date, datetime, timezone
 from decimal import Decimal
-from typing import Generic, List, Optional, TypeVar
+from typing import Generic, List, Literal, Optional, TypeVar
 
-from pydantic import BaseModel, Field, condecimal, constr, validator
+from pydantic import BaseModel, Field, condecimal, constr, validator, EmailStr
 from pydantic.generics import GenericModel
 
 
@@ -11,7 +11,7 @@ T = TypeVar("T")
 
 
 class StandardResponse(GenericModel, Generic[T]):
-    status: str = Field("success", const=True)
+    status: Literal["success"] = "success"
     message: Optional[str] = None
     data: T
 
@@ -31,7 +31,7 @@ class BeneficiarioResponse(BeneficiarioCreate):
 class ClienteCreate(BaseModel):
     nombre: constr(min_length=1, max_length=255)
     documento: constr(min_length=3, max_length=50)
-    email: Optional[constr(max_length=255)] = None
+    email: Optional[EmailStr] = None  # Valida formato de email automáticamente
 
 
 class ClienteResponse(ClienteCreate):
@@ -41,6 +41,7 @@ class ClienteResponse(ClienteCreate):
 
 class PolizaCreate(BaseModel):
     cliente_id: int
+    numero_poliza: constr(min_length=3, max_length=50)  # Agregado: obligatorio
     prima_total: Money
     fecha_emision: date
     fecha_vencimiento: date
@@ -53,10 +54,17 @@ class PolizaCreate(BaseModel):
             raise ValueError("fecha_vencimiento debe ser igual o posterior a fecha_emision")
         return value
 
+    @validator("beneficiarios")
+    def al_menos_un_beneficiario(cls, value: List) -> List:
+        if not value:
+            raise ValueError("La póliza debe tener al menos un beneficiario")
+        return value
+
 
 class PolizaResponse(BaseModel):
     id: int
     cliente_id: int
+    numero_poliza: Optional[str] = None
     prima_total: Decimal
     fecha_emision: date
     fecha_vencimiento: date

@@ -22,6 +22,11 @@ class ClientesRepository:
         row = self.conn.execute(stmt).mappings().first()
         return dict(row) if row else None
 
+    def get_by_documento(self, documento: str) -> Optional[Dict]:
+        stmt = select(clientes).where(clientes.c.documento == documento)
+        row = self.conn.execute(stmt).mappings().first()
+        return dict(row) if row else None
+
 
 class PolizasRepository:
     def __init__(self, conn: Connection):

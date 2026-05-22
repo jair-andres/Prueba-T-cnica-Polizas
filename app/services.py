@@ -14,7 +14,7 @@ class ClienteService:
         self.repo = ClientesRepository(conn)
 
     def create_cliente(self, payload: ClienteCreate) -> ClienteResponse:
-        existing = self.repo.get_by_documento(payload.documento) if hasattr(self.repo, 'get_by_documento') else None
+        existing = self.repo.get_by_documento(payload.documento)
         if existing is not None:
             raise HTTPException(status_code=400, detail="El documento ya está registrado")
         row = self.repo.create(payload.dict())
@@ -32,9 +32,13 @@ class PolizaService:
         if cliente is None:
             raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
+        if payload.fecha_emision > date.today():
+            raise HTTPException(status_code=400, detail="La fecha de emisión no puede ser futura")
+
         poliza = self.polizas.create(
             {
                 "cliente_id": payload.cliente_id,
+                "numero_poliza": payload.numero_poliza,
                 "prima_total": payload.prima_total,
                 "fecha_emision": payload.fecha_emision,
                 "fecha_vencimiento": payload.fecha_vencimiento,
@@ -44,6 +48,7 @@ class PolizaService:
         return PolizaResponse(
             id=poliza["id"],
             cliente_id=poliza["cliente_id"],
+            numero_poliza=poliza.get("numero_poliza"),
             prima_total=poliza["prima_total"],
             fecha_emision=poliza["fecha_emision"],
             fecha_vencimiento=poliza["fecha_vencimiento"],
@@ -79,10 +84,24 @@ class PagoService:
         if poliza is None:
             raise HTTPException(status_code=404, detail="Póliza no encontrada")
 
+        # Validar que la póliza esté activa
+        if poliza.get("estado") != "activa":
+            raise HTTPException(status_code=400, detail="No se pueden registrar pagos en una póliza que no está activa")
+
+        # Idempotencia
         if payload.clave_idempotencia:
             existing = self.pagos.get_by_idempotency(poliza_id, payload.clave_idempotencia)
             if existing is not None:
                 return PagoResponse(**existing)
+
+        # Validar que el pago no exceda el saldo pendiente
+        total_pagado = self.polizas.get_total_pagado(poliza_id)
+        saldo_pendiente = poliza["prima_total"] - total_pagado
+        if payload.monto > saldo_pendiente:
+            raise HTTPException(
+                status_code=400,
+                detail=f"El monto del pago ({payload.monto}) excede el saldo pendiente ({saldo_pendiente})",
+            )
 
         nuevo = self.pagos.create(poliza_id, payload.dict(exclude_unset=True))
         return PagoResponse(**nuevo)

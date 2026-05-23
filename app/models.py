@@ -4,6 +4,7 @@ from sqlalchemy import (
     Integer,
     String,
     Numeric,
+    Boolean,
     Date,
     TIMESTAMP,
     ForeignKey,
@@ -12,6 +13,24 @@ from sqlalchemy import (
 )
 
 from .database import metadata
+
+
+users = Table(
+    "users",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("username", String(255), nullable=False, unique=True),
+    Column("email", String(255), nullable=False, unique=True),
+    Column("hashed_password", String(255), nullable=False),
+    Column("is_active", Boolean, default=True),
+    Column("is_superuser", Boolean, default=False),
+    Column("login_attempts", Integer, default=0),
+    Column("last_login_attempt", TIMESTAMP(timezone=True), nullable=True),
+    Column("creado_en", TIMESTAMP(timezone=True), server_default=func.now(), nullable=False),
+    Column("creado_por", String(255)),
+    Column("actualizado_en", TIMESTAMP(timezone=True), server_default=func.now(), nullable=False),
+    Column("actualizado_por", String(255)),
+)
 
 
 clientes = Table(
@@ -54,6 +73,7 @@ beneficiarios = Table(
     Column("actualizado_en", TIMESTAMP(timezone=True), server_default=func.now(), nullable=False),
     Column("actualizado_por", String(255)),
 )
+
 
 poliza_beneficiarios = Table(
     "poliza_beneficiarios",

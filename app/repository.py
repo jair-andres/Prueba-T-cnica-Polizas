@@ -1,11 +1,54 @@
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Dict, List, Optional
 
-from sqlalchemy import func, insert, select, and_
+from sqlalchemy import func, insert, select, and_, update
 from sqlalchemy.engine import Connection
 
-from .models import clientes, polizas, beneficiarios, poliza_beneficiarios, pagos
+from .models import clientes, polizas, beneficiarios, poliza_beneficiarios, pagos, users
+
+
+class UsersRepository:
+    def __init__(self, conn: Connection):
+        self.conn = conn
+
+    def get_by_username(self, username: str) -> Optional[Dict]:
+        row = self.conn.execute(
+            select(users).where(users.c.username == username)
+        ).mappings().first()
+        return dict(row) if row else None
+
+    def get_by_email(self, email: str) -> Optional[Dict]:
+        row = self.conn.execute(
+            select(users).where(users.c.email == email)
+        ).mappings().first()
+        return dict(row) if row else None
+
+    def create(self, username: str, email: str, hashed_password: str) -> Dict:
+        stmt = (
+            insert(users)
+            .values(username=username, email=email, hashed_password=hashed_password)
+            .returning(*users.c)
+        )
+        row = self.conn.execute(stmt).mappings().first()
+        return dict(row)
+
+    def increment_login_attempts(self, user_id: int, at: datetime) -> None:
+        self.conn.execute(
+            update(users)
+            .where(users.c.id == user_id)
+            .values(
+                login_attempts=users.c.login_attempts + 1,
+                last_login_attempt=at,
+            )
+        )
+
+    def reset_login_attempts(self, user_id: int) -> None:
+        self.conn.execute(
+            update(users)
+            .where(users.c.id == user_id)
+            .values(login_attempts=0, last_login_attempt=None)
+        )
 
 
 class ClientesRepository:

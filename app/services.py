@@ -13,11 +13,15 @@ class ClienteService:
     def __init__(self, conn: Connection):
         self.repo = ClientesRepository(conn)
 
-    def create_cliente(self, payload: ClienteCreate) -> ClienteResponse:
+    def create_cliente(self, payload: ClienteCreate, created_by: Optional[str] = None) -> ClienteResponse:
         existing = self.repo.get_by_documento(payload.documento)
         if existing is not None:
             raise HTTPException(status_code=400, detail="El documento ya está registrado")
-        row = self.repo.create(payload.dict())
+        data = payload.dict()
+        if created_by:
+            data["creado_por"] = created_by
+            data["actualizado_por"] = created_by
+        row = self.repo.create(data)
         return ClienteResponse(**row)
 
 
@@ -27,7 +31,7 @@ class PolizaService:
         self.clientes = ClientesRepository(conn)
         self.polizas = PolizasRepository(conn)
 
-    def create_poliza(self, payload: PolizaCreate) -> PolizaResponse:
+    def create_poliza(self, payload: PolizaCreate, created_by: Optional[str] = None) -> PolizaResponse:
         cliente = self.clientes.get_by_id(payload.cliente_id)
         if cliente is None:
             raise HTTPException(status_code=404, detail="Cliente no encontrado")
@@ -35,16 +39,24 @@ class PolizaService:
         if payload.fecha_emision > date.today():
             raise HTTPException(status_code=400, detail="La fecha de emisión no puede ser futura")
 
-        poliza = self.polizas.create(
-            {
-                "cliente_id": payload.cliente_id,
-                "numero_poliza": payload.numero_poliza,
-                "prima_total": payload.prima_total,
-                "fecha_emision": payload.fecha_emision,
-                "fecha_vencimiento": payload.fecha_vencimiento,
-            },
-            [benef.dict() for benef in payload.beneficiarios],
-        )
+        poliza_data = {
+            "cliente_id": payload.cliente_id,
+            "numero_poliza": payload.numero_poliza,
+            "prima_total": payload.prima_total,
+            "fecha_emision": payload.fecha_emision,
+            "fecha_vencimiento": payload.fecha_vencimiento,
+        }
+        if created_by:
+            poliza_data["creado_por"] = created_by
+            poliza_data["actualizado_por"] = created_by
+
+        benefs = [benef.dict() for benef in payload.beneficiarios]
+        if created_by:
+            for b in benefs:
+                b["creado_por"] = created_by
+                b["actualizado_por"] = created_by
+
+        poliza = self.polizas.create(poliza_data, benefs)
         return PolizaResponse(
             id=poliza["id"],
             cliente_id=poliza["cliente_id"],
@@ -79,7 +91,7 @@ class PagoService:
         self.polizas = PolizasRepository(conn)
         self.pagos = PagosRepository(conn)
 
-    def create_pago(self, poliza_id: int, payload: PagoCreate) -> PagoResponse:
+    def create_pago(self, poliza_id: int, payload: PagoCreate, created_by: Optional[str] = None) -> PagoResponse:
         poliza = self.polizas.get_by_id(poliza_id)
         if poliza is None:
             raise HTTPException(status_code=404, detail="Póliza no encontrada")
@@ -103,7 +115,11 @@ class PagoService:
                 detail=f"El monto del pago ({payload.monto}) excede el saldo pendiente ({saldo_pendiente})",
             )
 
-        nuevo = self.pagos.create(poliza_id, payload.dict(exclude_unset=True))
+        pago_data = payload.dict(exclude_unset=True)
+        if created_by:
+            pago_data["creado_por"] = created_by
+            pago_data["actualizado_por"] = created_by
+        nuevo = self.pagos.create(poliza_id, pago_data)
         return PagoResponse(**nuevo)
 
 

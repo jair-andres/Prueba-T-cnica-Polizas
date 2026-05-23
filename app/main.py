@@ -2,10 +2,10 @@ import logging
 from typing import Dict
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import HTTPException, RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
-from pydantic import ValidationError
 
 from .config import settings
 from .database import engine
@@ -24,20 +24,40 @@ app = FastAPI(
 
 
 # ──────────────────────────────────────────────
-# Manejador global de excepciones
+# Manejador global de excepciones - estructura unificada
 # ──────────────────────────────────────────────
 
-@app.exception_handler(ValidationError)
-async def validation_error_handler(request: Request, exc: ValidationError) -> JSONResponse:
-    """Devuelve errores de validación de Pydantic como JSON."""
+
+def _error_response(status_code: int, message: str, errors: list | None = None) -> JSONResponse:
+    """Construye una respuesta de error con estructura consistente."""
+    content = {"status": "error", "message": message}
+    if errors:
+        content["errors"] = errors
+    return JSONResponse(status_code=status_code, content=content)
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+    """Convierte HTTPException de FastAPI a nuestra estructura estándar."""
+    logger.warning("HTTP %s en %s: %s", exc.status_code, request.url.path, exc.detail)
+    return _error_response(
+        status_code=exc.status_code,
+        message=exc.detail,
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    """Devuelve errores de validación de Pydantic/FastAPI como JSON."""
     logger.warning("Error de validación en %s: %s", request.url.path, exc.errors())
-    return JSONResponse(
+    errors = [
+        {"field": ".".join(str(p) for p in err.get("loc", [])), "message": err.get("msg", "")}
+        for err in exc.errors()
+    ]
+    return _error_response(
         status_code=422,
-        content={
-            "status": "error",
-            "message": "Error de validación en los datos enviados",
-            "errors": exc.errors(),
-        },
+        message="Error de validación en los datos enviados",
+        errors=errors,
     )
 
 
@@ -45,12 +65,9 @@ async def validation_error_handler(request: Request, exc: ValidationError) -> JS
 async def sqlalchemy_error_handler(request: Request, exc: SQLAlchemyError) -> JSONResponse:
     """Devuelve errores de base de datos como JSON en lugar de HTML."""
     logger.error("Error de base de datos en %s: %s", request.url.path, str(exc))
-    return JSONResponse(
+    return _error_response(
         status_code=500,
-        content={
-            "status": "error",
-            "message": "Error interno en la base de datos. Por favor intenta nuevamente.",
-        },
+        message="Error interno en la base de datos. Por favor intenta nuevamente.",
     )
 
 
@@ -58,12 +75,9 @@ async def sqlalchemy_error_handler(request: Request, exc: SQLAlchemyError) -> JS
 async def generic_error_handler(request: Request, exc: Exception) -> JSONResponse:
     """Captura cualquier excepción no controlada y la devuelve como JSON."""
     logger.exception("Error no controlado en %s: %s", request.url.path, str(exc))
-    return JSONResponse(
+    return _error_response(
         status_code=500,
-        content={
-            "status": "error",
-            "message": "Error interno del servidor.",
-        },
+        message="Error interno del servidor.",
     )
 
 
@@ -107,12 +121,14 @@ def health_check() -> Dict[str, str]:
 # Routers
 # ──────────────────────────────────────────────
 
+from .api.auth import router as auth_router
 from .api.clients import router as clientes_router
 from .api.polizas import router as polizas_router
 from .api.pagos import router as pagos_router
 from .api.reportes import router as reportes_router
 
 
+app.include_router(auth_router)
 app.include_router(clientes_router)
 app.include_router(polizas_router)
 app.include_router(pagos_router)

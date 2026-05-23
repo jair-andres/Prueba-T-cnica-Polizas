@@ -1,7 +1,7 @@
 from __future__ import annotations
 from datetime import date, datetime, timezone
 from decimal import Decimal
-from typing import Generic, List, Literal, Optional, TypeVar
+from typing import Any, Generic, List, Literal, Optional, TypeVar, Union
 
 from pydantic import BaseModel, Field, condecimal, constr, validator, EmailStr
 from pydantic.generics import GenericModel
@@ -10,10 +10,83 @@ from pydantic.generics import GenericModel
 T = TypeVar("T")
 
 
+class UserBase(BaseModel):
+    username: constr(min_length=3, max_length=255)
+    email: EmailStr
+
+
+class UserCreate(UserBase):
+    password: constr(min_length=8)
+
+
+class UserInDB(UserBase):
+    hashed_password: str
+    is_active: bool = True
+    is_superuser: bool = False
+    login_attempts: int = 0
+    last_login_attempt: Optional[datetime] = None
+    creado_en: datetime
+    creado_por: Optional[str] = None
+    actualizado_en: datetime
+    actualizado_por: Optional[str] = None
+
+    class Config:
+        orm_mode = True
+
+
+class UserResponse(BaseModel):
+    id: int
+    username: str
+    email: str
+    is_active: bool
+    is_superuser: bool
+    creado_en: datetime
+    actualizado_en: datetime
+
+    class Config:
+        orm_mode = True
+
+
+class UserLogin(BaseModel):
+    username: Optional[str] = None
+    email: Optional[EmailStr] = None
+    password: str
+
+    @validator("username", always=True)
+    def check_username_or_email(cls, v, values):
+        if not v and not values.get("email"):
+            raise ValueError("Debe proporcionar un nombre de usuario o un correo electrónico.")
+        return v
+
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+
+class TokenData(BaseModel):
+    username: Optional[str] = None
+
+
 class StandardResponse(GenericModel, Generic[T]):
-    status: Literal["success"] = "success"
+    """Estructura única de respuesta para todos los endpoints (éxito y error)."""
+    status: Literal["success", "error"] = "success"
     message: Optional[str] = None
-    data: T
+    data: Optional[T] = None
+
+
+class ErrorDetail(BaseModel):
+    """Detalle de un error de validación de campo."""
+    field: Optional[str] = None
+    message: str
+
+
+class ErrorResponse(BaseModel):
+    """Respuesta de error con estructura consistente."""
+    status: Literal["error"] = "error"
+    message: str
+    errors: Optional[List[ErrorDetail]] = None
+
 
 Money = condecimal(max_digits=12, decimal_places=2, gt=0)
 
@@ -41,7 +114,7 @@ class ClienteResponse(ClienteCreate):
 
 class PolizaCreate(BaseModel):
     cliente_id: int
-    numero_poliza: constr(min_length=3, max_length=50)  # Agregado: obligatorio
+    numero_poliza: constr(min_length=3, max_length=50)
     prima_total: Money
     fecha_emision: date
     fecha_vencimiento: date

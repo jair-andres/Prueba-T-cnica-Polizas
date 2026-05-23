@@ -25,7 +25,7 @@ class ClienteService:
         existing = self.repo.get_by_documento(payload.documento)
         if existing is not None:
             raise HTTPException(status_code=400, detail="El documento ya está registrado")
-        data = payload.dict()
+        data = payload.model_dump()
         if created_by:
             data["creado_por"] = created_by
             data["actualizado_por"] = created_by
@@ -58,7 +58,7 @@ class PolizaService:
             poliza_data["creado_por"] = created_by
             poliza_data["actualizado_por"] = created_by
 
-        benefs = [benef.dict() for benef in payload.beneficiarios]
+        benefs = [benef.model_dump() for benef in payload.beneficiarios]
         if created_by:
             for b in benefs:
                 b["creado_por"] = created_by
@@ -152,7 +152,7 @@ class PagoService:
             )
 
         # ── 5. Insertar ──
-        pago_data = payload.dict(exclude_unset=True)
+        pago_data = payload.model_dump(exclude_unset=True)
         if created_by:
             pago_data["creado_por"] = created_by
             pago_data["actualizado_por"] = created_by

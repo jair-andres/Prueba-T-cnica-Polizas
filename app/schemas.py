@@ -1,23 +1,28 @@
 from __future__ import annotations
+
 from datetime import date, datetime, timezone
 from decimal import Decimal
-from typing import Any, Generic, List, Literal, Optional, TypeVar, Union
+from typing import Annotated, Generic, List, Literal, Optional, TypeVar
 
-from pydantic import BaseModel, Field, condecimal, constr, validator, EmailStr
-from pydantic.generics import GenericModel
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, StringConstraints, field_validator, model_validator
 
 
 T = TypeVar("T")
 
+# ── Tipos reutilizables ────────────────────────────────────────────────────────
+Money = Annotated[Decimal, Field(max_digits=12, decimal_places=2, gt=Decimal("0"))]
+
+
+# ── Auth ──────────────────────────────────────────────────────────────────────
 
 class UserBase(BaseModel):
-    username: constr(min_length=3, max_length=255)
+    username: Annotated[str, StringConstraints(min_length=3, max_length=255)]
     email: EmailStr
 
 
 class UserCreate(UserBase):
     # bcrypt tiene un límite de 72 bytes; lo validamos aquí para dar un error claro
-    password: constr(min_length=8, max_length=72)
+    password: Annotated[str, StringConstraints(min_length=8, max_length=72)]
 
 
 class UserInDB(UserBase):
@@ -31,8 +36,7 @@ class UserInDB(UserBase):
     actualizado_en: datetime
     actualizado_por: Optional[str] = None
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class UserResponse(BaseModel):
@@ -44,8 +48,7 @@ class UserResponse(BaseModel):
     creado_en: datetime
     actualizado_en: datetime
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class UserLogin(BaseModel):
@@ -53,11 +56,11 @@ class UserLogin(BaseModel):
     email: Optional[EmailStr] = None
     password: str
 
-    @validator("username", always=True)
-    def check_username_or_email(cls, v, values):
-        if not v and not values.get("email"):
+    @model_validator(mode="after")
+    def check_username_or_email(self) -> UserLogin:
+        if not self.username and not self.email:
             raise ValueError("Debe proporcionar un nombre de usuario o un correo electrónico.")
-        return v
+        return self
 
 
 class Token(BaseModel):
@@ -69,43 +72,32 @@ class TokenData(BaseModel):
     username: Optional[str] = None
 
 
-class StandardResponse(GenericModel, Generic[T]):
-    """Estructura única de respuesta para todos los endpoints (éxito y error)."""
+# ── Respuestas estándar ────────────────────────────────────────────────────────
+
+class StandardResponse(BaseModel, Generic[T]):
+    """Estructura única de respuesta para todos los endpoints."""
     status: Literal["success", "error"] = "success"
     message: Optional[str] = None
     data: Optional[T] = None
 
 
 class ErrorDetail(BaseModel):
-    """Detalle de un error de validación de campo."""
     field: Optional[str] = None
     message: str
 
 
 class ErrorResponse(BaseModel):
-    """Respuesta de error con estructura consistente."""
     status: Literal["error"] = "error"
     message: str
     errors: Optional[List[ErrorDetail]] = None
 
 
-Money = condecimal(max_digits=12, decimal_places=2, gt=0)
-
-
-class BeneficiarioCreate(BaseModel):
-    nombre: constr(min_length=1, max_length=255)
-    documento: constr(min_length=3, max_length=50)
-    parentesco: Optional[constr(max_length=100)] = None
-
-
-class BeneficiarioResponse(BeneficiarioCreate):
-    id: int
-
+# ── Clientes ──────────────────────────────────────────────────────────────────
 
 class ClienteCreate(BaseModel):
-    nombre: constr(min_length=1, max_length=255)
-    documento: constr(min_length=3, max_length=50)
-    email: Optional[EmailStr] = None  # Valida formato de email automáticamente
+    nombre: Annotated[str, StringConstraints(min_length=1, max_length=255)]
+    documento: Annotated[str, StringConstraints(min_length=3, max_length=50)]
+    email: Optional[EmailStr] = None
 
 
 class ClienteResponse(ClienteCreate):
@@ -113,22 +105,36 @@ class ClienteResponse(ClienteCreate):
     creado_en: datetime
 
 
+# ── Pólizas ───────────────────────────────────────────────────────────────────
+
+class BeneficiarioCreate(BaseModel):
+    nombre: Annotated[str, StringConstraints(min_length=1, max_length=255)]
+    documento: Annotated[str, StringConstraints(min_length=3, max_length=50)]
+    parentesco: Optional[Annotated[str, StringConstraints(max_length=100)]] = None
+
+
+class BeneficiarioResponse(BeneficiarioCreate):
+    id: int
+
+
 class PolizaCreate(BaseModel):
     cliente_id: int
-    numero_poliza: constr(min_length=3, max_length=50)
+    numero_poliza: Annotated[str, StringConstraints(min_length=3, max_length=50)]
     prima_total: Money
     fecha_emision: date
     fecha_vencimiento: date
     beneficiarios: List[BeneficiarioCreate]
 
-    @validator("fecha_vencimiento")
-    def vencimiento_after_emision(cls, value: date, values: dict) -> date:
-        fecha_emision = values.get("fecha_emision")
+    @field_validator("fecha_vencimiento", mode="after")
+    @classmethod
+    def vencimiento_after_emision(cls, value: date, info) -> date:
+        fecha_emision = info.data.get("fecha_emision")
         if fecha_emision and value < fecha_emision:
             raise ValueError("fecha_vencimiento debe ser igual o posterior a fecha_emision")
         return value
 
-    @validator("beneficiarios")
+    @field_validator("beneficiarios", mode="after")
+    @classmethod
     def al_menos_un_beneficiario(cls, value: List) -> List:
         if not value:
             raise ValueError("La póliza debe tener al menos un beneficiario")
@@ -145,13 +151,16 @@ class PolizaResponse(BaseModel):
     beneficiarios: List[BeneficiarioResponse]
 
 
+# ── Pagos ─────────────────────────────────────────────────────────────────────
+
 class PagoCreate(BaseModel):
     monto: Money
     fecha_pago: Optional[datetime] = None
-    clave_idempotencia: Optional[constr(min_length=1, max_length=100)] = None
+    clave_idempotencia: Optional[Annotated[str, StringConstraints(min_length=1, max_length=100)]] = None
 
-    @validator("fecha_pago", pre=True, always=True)
-    def default_fecha_pago(cls, value: Optional[datetime]) -> datetime:
+    @field_validator("fecha_pago", mode="before")
+    @classmethod
+    def default_fecha_pago(cls, value) -> datetime:
         if value is None:
             return datetime.now(timezone.utc)
         return value
@@ -165,6 +174,8 @@ class PagoResponse(BaseModel):
     clave_idempotencia: Optional[str] = None
     creado_en: datetime
 
+
+# ── Estado y reportes ─────────────────────────────────────────────────────────
 
 class PolizaEstadoResponse(BaseModel):
     poliza_id: int

@@ -1,4 +1,5 @@
 import logging
+from contextlib import asynccontextmanager
 from typing import Dict
 
 from fastapi import FastAPI, Request
@@ -74,6 +75,22 @@ _TAGS = [
     },
 ]
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("Verificando conexión a la base de datos...")
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except Exception:
+        logger.error("No se pudo establecer la conexión a la base de datos en el arranque.", exc_info=True)
+        raise
+    logger.info("Conexión a la base de datos establecida correctamente.")
+
+    yield
+
+    logger.info("Cerrando aplicación y liberando recursos.")
+
+
 app = FastAPI(
     title="Gestión de Pólizas",
     description=_DESCRIPTION,
@@ -81,10 +98,11 @@ app = FastAPI(
     contact={"name": "Jair Barreto", "email": "jairbarreto23@gmail.com"},
     license_info={"name": "MIT"},
     openapi_tags=_TAGS,
+    lifespan=lifespan,
     swagger_ui_parameters={
-        "persistAuthorization": True,       # el token no se pierde al recargar la página
-        "defaultModelsExpandDepth": -1,     # oculta la sección "Schemas" por defecto
-        "tryItOutEnabled": True,            # activa "Try it out" en todos los endpoints
+        "persistAuthorization": True,
+        "defaultModelsExpandDepth": -1,
+        "tryItOutEnabled": True,
     },
 )
 
@@ -145,28 +163,6 @@ async def generic_error_handler(request: Request, exc: Exception) -> JSONRespons
         status_code=500,
         message="Error interno del servidor.",
     )
-
-
-# ──────────────────────────────────────────────
-# Eventos de ciclo de vida
-# ──────────────────────────────────────────────
-
-@app.on_event("startup")
-def verify_database_connection() -> None:
-    """Verifica la conexión a la base de datos antes de arrancar la aplicación."""
-    logger.info("Verificando conexión a la base de datos...")
-    try:
-        with engine.connect() as connection:
-            connection.execute(text("SELECT 1"))
-    except Exception:
-        logger.error("No se pudo establecer la conexión a la base de datos en el arranque.", exc_info=True)
-        raise
-    logger.info("Conexión a la base de datos establecida correctamente.")
-
-
-@app.on_event("shutdown")
-def shutdown_event() -> None:
-    logger.info("Cerrando aplicación y liberando recursos.")
 
 
 # ──────────────────────────────────────────────

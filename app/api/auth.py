@@ -66,11 +66,15 @@ Devuelve un `access_token` de tipo `Bearer` que debe enviarse en el header:
 Authorization: Bearer <token>
 ```
 
+**Cómo usarlo en Swagger UI:**
+1. Haz clic en **Authorize 🔒** (arriba a la derecha de la página).
+2. Escribe tu `username` y `password`.
+3. Los campos `client_id` y `client_secret` **déjalos vacíos** — esta API no los usa.
+4. Clic en **Authorize** → el token se guarda y se envía automáticamente en cada request.
+
 **Reglas de bloqueo:**
 - Tras **5 intentos fallidos** consecutivos la cuenta queda bloqueada **15 minutos**.
 - El contador se resetea al primer login exitoso.
-
-> En Swagger UI usa el botón **Authorize 🔒** para pegar el token y autenticar el resto de endpoints.
 """,
 )
 def login(

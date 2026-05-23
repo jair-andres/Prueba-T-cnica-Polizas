@@ -81,6 +81,11 @@ app = FastAPI(
     contact={"name": "Jair Barreto", "email": "jairbarreto23@gmail.com"},
     license_info={"name": "MIT"},
     openapi_tags=_TAGS,
+    swagger_ui_parameters={
+        "persistAuthorization": True,       # el token no se pierde al recargar la página
+        "defaultModelsExpandDepth": -1,     # oculta la sección "Schemas" por defecto
+        "tryItOutEnabled": True,            # activa "Try it out" en todos los endpoints
+    },
 )
 
 

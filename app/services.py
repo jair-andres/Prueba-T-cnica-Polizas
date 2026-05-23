@@ -4,8 +4,9 @@ from typing import List, Optional
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
+from sqlalchemy import text
 from sqlalchemy.engine import Connection
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 from .repository import ClientesRepository, PolizasRepository, PagosRepository, ReportesRepository
 from .schemas import ClienteCreate, ClienteResponse, PolizaCreate, PolizaResponse, PagoCreate, PagoResponse, PolizaEstadoResponse
@@ -116,9 +117,17 @@ class PagoService:
                 return PagoResponse(**existing)
 
         # ── 2. FOR UPDATE: serializa requests concurrentes sobre la misma póliza ──
-        # Desde aquí hasta el commit, ningún otro request puede leer ni escribir
-        # esta fila con FOR UPDATE, eliminando la race condition en el saldo.
-        poliza = self.polizas.get_by_id_for_update(poliza_id)
+        # lock_timeout evita que el segundo request quede bloqueado indefinidamente
+        # si otro está procesando un pago simultáneo sobre la misma póliza.
+        try:
+            self.conn.execute(text("SET LOCAL lock_timeout = '5s'"))
+            poliza = self.polizas.get_by_id_for_update(poliza_id)
+        except OperationalError:
+            raise HTTPException(
+                status_code=503,
+                detail="Hay otro pago en proceso para esta póliza. Intenta en unos segundos.",
+            )
+
         if poliza is None:
             raise HTTPException(status_code=404, detail="Póliza no encontrada")
 

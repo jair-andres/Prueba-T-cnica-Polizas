@@ -16,7 +16,34 @@ def _get_conn():
     yield from get_connection()
 
 
-@router.post("/{poliza_id}/pagos", response_model=StandardResponse[PagoResponse], status_code=201)
+@router.post(
+    "/{poliza_id}/pagos",
+    response_model=StandardResponse[PagoResponse],
+    status_code=201,
+    summary="Registrar pago",
+    responses={
+        401: {"description": "Token ausente o inválido"},
+        404: {"description": "Póliza no encontrada"},
+        400: {"description": "Monto excede saldo pendiente o póliza inactiva"},
+        409: {"description": "Conflicto de idempotencia (raro, ver descripción)"},
+    },
+    description="""
+Registra un pago total o parcial sobre una póliza activa.
+
+**Idempotencia:**
+Envía `clave_idempotencia` (UUID recomendado) para hacer el endpoint idempotente.
+Si el cliente reintenta con la misma clave, se devuelve el pago original sin duplicarlo.
+
+**Concurrencia:**
+El endpoint usa `SELECT ... FOR UPDATE` para serializar pagos simultáneos sobre la misma
+póliza, eliminando race conditions en el cálculo del saldo.
+
+**Reglas:**
+- El `monto` no puede superar el saldo pendiente (`prima_total - suma de pagos`).
+- La póliza debe tener `estado = activa`.
+- Si no se envía `fecha_pago`, se usa la fecha/hora actual (UTC).
+""",
+)
 def create_pago(
     poliza_id: int,
     payload: PagoCreate,

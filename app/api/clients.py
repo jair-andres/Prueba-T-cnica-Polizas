@@ -11,12 +11,32 @@ from ..schemas import ClienteCreate, ClienteResponse, StandardResponse
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/clientes", tags=["Clientes"])
 
+_RESPONSES = {
+    401: {"description": "Token ausente o inválido"},
+    400: {"description": "Documento ya registrado", "content": {"application/json": {"example": {"status": "error", "message": "El documento ya está registrado"}}}},
+}
+
 
 def _get_conn():
     yield from get_connection()
 
 
-@router.post("/", response_model=StandardResponse[ClienteResponse], status_code=201)
+@router.post(
+    "/",
+    response_model=StandardResponse[ClienteResponse],
+    status_code=201,
+    summary="Crear cliente",
+    responses=_RESPONSES,
+    description="""
+Registra un nuevo cliente en el sistema.
+
+- `documento` debe ser **único** en el sistema (cédula, NIT, pasaporte, etc.).
+- `email` es opcional pero se valida el formato si se proporciona.
+- El campo `creado_por` se registra automáticamente con el usuario autenticado.
+
+Un mismo cliente puede tener **múltiples pólizas activas** simultáneamente.
+""",
+)
 def create_cliente(
     payload: ClienteCreate,
     conn: Connection = Depends(_get_conn),

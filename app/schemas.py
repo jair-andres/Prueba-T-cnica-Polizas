@@ -16,7 +16,8 @@ class UserBase(BaseModel):
 
 
 class UserCreate(UserBase):
-    password: constr(min_length=8)
+    # bcrypt tiene un límite de 72 bytes; lo validamos aquí para dar un error claro
+    password: constr(min_length=8, max_length=72)
 
 
 class UserInDB(UserBase):

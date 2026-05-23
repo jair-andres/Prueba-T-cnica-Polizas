@@ -1,12 +1,19 @@
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import List, Optional
+from zoneinfo import ZoneInfo
 
-from sqlalchemy.engine import Connection
 from fastapi import HTTPException
+from sqlalchemy.engine import Connection
+from sqlalchemy.exc import IntegrityError
 
 from .repository import ClientesRepository, PolizasRepository, PagosRepository, ReportesRepository
 from .schemas import ClienteCreate, ClienteResponse, PolizaCreate, PolizaResponse, PagoCreate, PagoResponse, PolizaEstadoResponse
+
+
+def _hoy_bogota() -> date:
+    """Fecha actual en la zona horaria de Bogotá (America/Bogota)."""
+    return datetime.now(tz=ZoneInfo("America/Bogota")).date()
 
 
 class ClienteService:
@@ -36,7 +43,7 @@ class PolizaService:
         if cliente is None:
             raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
-        if payload.fecha_emision > date.today():
+        if payload.fecha_emision > _hoy_bogota():
             raise HTTPException(status_code=400, detail="La fecha de emisión no puede ser futura")
 
         poliza_data = {
@@ -75,7 +82,17 @@ class PolizaService:
         total_pagado = self.polizas.get_total_pagado(poliza_id)
         fecha_ultimo_pago = self.polizas.get_ultimo_pago(poliza_id)
         saldo = poliza["prima_total"] - total_pagado
-        estado = "al día" if total_pagado >= poliza["prima_total"] else "en mora"
+
+        # La mora se evalúa con la fecha actual en Bogotá (America/Bogota),
+        # aunque los timestamps internos se almacenan en UTC.
+        hoy = _hoy_bogota()
+        if total_pagado >= poliza["prima_total"]:
+            estado = "al día"
+        elif poliza["fecha_vencimiento"] < hoy:
+            estado = "en mora"
+        else:
+            estado = "pendiente"
+
         return PolizaEstadoResponse(
             poliza_id=poliza_id,
             prima_total=poliza["prima_total"],
@@ -92,34 +109,56 @@ class PagoService:
         self.pagos = PagosRepository(conn)
 
     def create_pago(self, poliza_id: int, payload: PagoCreate, created_by: Optional[str] = None) -> PagoResponse:
-        poliza = self.polizas.get_by_id(poliza_id)
-        if poliza is None:
-            raise HTTPException(status_code=404, detail="Póliza no encontrada")
-
-        # Validar que la póliza esté activa
-        if poliza.get("estado") != "activa":
-            raise HTTPException(status_code=400, detail="No se pueden registrar pagos en una póliza que no está activa")
-
-        # Idempotencia
+        # ── 1. Fast path: idempotencia sin lock (evita contención innecesaria) ──
         if payload.clave_idempotencia:
             existing = self.pagos.get_by_idempotency(poliza_id, payload.clave_idempotencia)
             if existing is not None:
                 return PagoResponse(**existing)
 
-        # Validar que el pago no exceda el saldo pendiente
+        # ── 2. FOR UPDATE: serializa requests concurrentes sobre la misma póliza ──
+        # Desde aquí hasta el commit, ningún otro request puede leer ni escribir
+        # esta fila con FOR UPDATE, eliminando la race condition en el saldo.
+        poliza = self.polizas.get_by_id_for_update(poliza_id)
+        if poliza is None:
+            raise HTTPException(status_code=404, detail="Póliza no encontrada")
+
+        if poliza.get("estado") != "activa":
+            raise HTTPException(status_code=400, detail="No se pueden registrar pagos en una póliza que no está activa")
+
+        # ── 3. Re-check idempotencia tras el lock ──
+        # Cubre el caso donde dos requests con la misma clave llegaron simultáneos:
+        # el segundo llega aquí y encuentra el pago que el primero ya insertó.
+        if payload.clave_idempotencia:
+            existing = self.pagos.get_by_idempotency(poliza_id, payload.clave_idempotencia)
+            if existing is not None:
+                return PagoResponse(**existing)
+
+        # ── 4. Saldo consistente (lectura segura porque tenemos el lock) ──
         total_pagado = self.polizas.get_total_pagado(poliza_id)
         saldo_pendiente = poliza["prima_total"] - total_pagado
         if payload.monto > saldo_pendiente:
             raise HTTPException(
                 status_code=400,
-                detail=f"El monto del pago ({payload.monto}) excede el saldo pendiente ({saldo_pendiente})",
+                detail=f"El monto ({payload.monto}) excede el saldo pendiente ({saldo_pendiente})",
             )
 
+        # ── 5. Insertar ──
         pago_data = payload.dict(exclude_unset=True)
         if created_by:
             pago_data["creado_por"] = created_by
             pago_data["actualizado_por"] = created_by
-        nuevo = self.pagos.create(poliza_id, pago_data)
+
+        try:
+            nuevo = self.pagos.create(poliza_id, pago_data)
+        except IntegrityError:
+            # Última línea de defensa: si dos requests sin clave_idempotencia idéntica
+            # pasaron el lock al mismo tiempo (no debería ocurrir), el UNIQUE constraint
+            # del schema lo atrapa. Retornamos 409 en vez de 500.
+            raise HTTPException(
+                status_code=409,
+                detail="Conflicto al registrar el pago. Verifica la clave de idempotencia.",
+            )
+
         return PagoResponse(**nuevo)
 
 

@@ -76,25 +76,39 @@ class PolizasRepository:
         self.conn = conn
 
     def create(self, payload: Dict, beneficiarios_payload: List[Dict]) -> Dict:
-        with self.conn.begin():
-            stmt = insert(polizas).values(**payload).returning(*polizas.c)
-            pol_row = self.conn.execute(stmt).mappings().first()
-            pol_id = pol_row["id"]
-            benefs = []
-            for b in beneficiarios_payload:
-                # upsert beneficiario by documento
-                existing = self.conn.execute(select(beneficiarios).where(beneficiarios.c.documento == b["documento"]))
-                existing = existing.mappings().first()
-                if existing:
-                    benef_id = existing["id"]
-                else:
-                    r = self.conn.execute(insert(beneficiarios).values(**{k: v for k, v in b.items() if k != 'parentesco'}).returning(*beneficiarios.c)).mappings().first()
-                    benef_id = r["id"]
-                self.conn.execute(insert(poliza_beneficiarios).values(poliza_id=pol_id, beneficiario_id=benef_id, parentesco=b.get("parentesco")))
-            return dict(pol_row)
+        # La transacción ya está abierta por engine.begin() en get_connection().
+        # No se abre una nueva — todo cae en el mismo commit/rollback del request.
+        stmt = insert(polizas).values(**payload).returning(*polizas.c)
+        pol_row = self.conn.execute(stmt).mappings().first()
+        pol_id = pol_row["id"]
+        for b in beneficiarios_payload:
+            existing = self.conn.execute(
+                select(beneficiarios).where(beneficiarios.c.documento == b["documento"])
+            ).mappings().first()
+            if existing:
+                benef_id = existing["id"]
+            else:
+                r = self.conn.execute(
+                    insert(beneficiarios)
+                    .values(**{k: v for k, v in b.items() if k != "parentesco"})
+                    .returning(*beneficiarios.c)
+                ).mappings().first()
+                benef_id = r["id"]
+            self.conn.execute(
+                insert(poliza_beneficiarios).values(
+                    poliza_id=pol_id, beneficiario_id=benef_id, parentesco=b.get("parentesco")
+                )
+            )
+        return dict(pol_row)
 
     def get_by_id(self, poliza_id: int) -> Optional[Dict]:
         stmt = select(polizas).where(polizas.c.id == poliza_id)
+        row = self.conn.execute(stmt).mappings().first()
+        return dict(row) if row else None
+
+    def get_by_id_for_update(self, poliza_id: int) -> Optional[Dict]:
+        """Lock exclusivo sobre la fila. Serializa pagos concurrentes sobre la misma póliza."""
+        stmt = select(polizas).where(polizas.c.id == poliza_id).with_for_update()
         row = self.conn.execute(stmt).mappings().first()
         return dict(row) if row else None
 

@@ -14,14 +14,32 @@ from ..schemas import Token, UserCreate, UserResponse, StandardResponse
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["Autenticación"])
 
+_401 = {401: {"description": "Credenciales incorrectas", "content": {"application/json": {"example": {"status": "error", "message": "Credenciales incorrectas"}}}}}
+_429 = {429: {"description": "Cuenta bloqueada por exceso de intentos fallidos", "content": {"application/json": {"example": {"status": "error", "message": "Cuenta bloqueada temporalmente. Intenta de nuevo en 15 minuto(s)."}}}}}
+_400 = {400: {"description": "Datos duplicados o inválidos", "content": {"application/json": {"example": {"status": "error", "message": "El nombre de usuario ya existe"}}}}}
+
 
 def _get_conn():
     yield from get_connection()
 
 
-@router.post("/register", response_model=StandardResponse[UserResponse], status_code=201)
+@router.post(
+    "/register",
+    response_model=StandardResponse[UserResponse],
+    status_code=201,
+    summary="Registrar nuevo usuario",
+    responses={**_400},
+    description="""
+Crea un usuario con username, email y contraseña.
+
+**Requisitos de contraseña:**
+- Mínimo 8 caracteres, máximo 72.
+
+**Restricciones:**
+- `username` y `email` deben ser únicos en el sistema.
+""",
+)
 def register(payload: UserCreate, conn: Connection = Depends(_get_conn)):
-    """Registra un nuevo usuario. Email y username deben ser únicos."""
     repo = UsersRepository(conn)
     if repo.get_by_username(payload.username):
         raise HTTPException(status_code=400, detail="El nombre de usuario ya existe")
@@ -34,30 +52,42 @@ def register(payload: UserCreate, conn: Connection = Depends(_get_conn)):
     return {"status": "success", "data": UserResponse(**user)}
 
 
-@router.post("/login", response_model=Token)
+@router.post(
+    "/login",
+    response_model=Token,
+    summary="Obtener token JWT",
+    responses={**_401, **_429},
+    description="""
+Autentica con **username** y **password** (enviados como `application/x-www-form-urlencoded`).
+
+Devuelve un `access_token` de tipo `Bearer` que debe enviarse en el header:
+
+```
+Authorization: Bearer <token>
+```
+
+**Reglas de bloqueo:**
+- Tras **5 intentos fallidos** consecutivos la cuenta queda bloqueada **15 minutos**.
+- El contador se resetea al primer login exitoso.
+
+> En Swagger UI usa el botón **Authorize 🔒** para pegar el token y autenticar el resto de endpoints.
+""",
+)
 def login(
     form: OAuth2PasswordRequestForm = Depends(),
     conn: Connection = Depends(_get_conn),
 ):
-    """
-    Login con username y password.
-    - Bloquea la cuenta tras MAX_LOGIN_ATTEMPTS intentos fallidos.
-    - El bloqueo dura LOGIN_COOLDOWN_MINUTES minutos.
-    """
     repo = UsersRepository(conn)
     user = repo.get_by_username(form.username)
 
     if user is None:
-        # Respuesta genérica para no revelar si el usuario existe
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales incorrectas")
 
     now = datetime.now(timezone.utc)
 
-    # Verificar bloqueo por intentos fallidos
     if user["login_attempts"] >= settings.max_login_attempts:
         last = user["last_login_attempt"]
         if last is not None:
-            # Asegurar que last sea timezone-aware
             if last.tzinfo is None:
                 last = last.replace(tzinfo=timezone.utc)
             lockout_end = last + timedelta(minutes=settings.login_cooldown_minutes)
@@ -68,17 +98,15 @@ def login(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                     detail=f"Cuenta bloqueada temporalmente. Intenta de nuevo en {remaining_min} minuto(s).",
                 )
-        # Expiró el bloqueo: resetear
         repo.reset_login_attempts(user["id"])
         user["login_attempts"] = 0
 
-    # Verificar contraseña
     if not verify_password(form.password, user["hashed_password"]):
         repo.increment_login_attempts(user["id"], now)
         attempts_after = user["login_attempts"] + 1
         remaining = settings.max_login_attempts - attempts_after
         if remaining <= 0:
-            logger.warning("Cuenta bloqueada tras intentos fallidos: username=%s", form.username)
+            logger.warning("Cuenta bloqueada: username=%s", form.username)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Credenciales incorrectas. Cuenta bloqueada temporalmente.",

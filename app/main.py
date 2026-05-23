@@ -14,12 +14,73 @@ from .logging_config import configure_logging
 configure_logging()
 logger = logging.getLogger(__name__)
 
+_DESCRIPTION = """
+## Sistema de Gestión de Pólizas — API REST
+
+Permite registrar clientes, emitir pólizas con beneficiarios, registrar pagos
+(totales o parciales) y consultar el estado de cartera.
+
+---
+
+### Autenticación
+
+Todos los endpoints de negocio requieren un **JWT Bearer token**.
+
+**Flujo para obtener el token:**
+
+1. Registra un usuario → `POST /auth/register`
+2. Obtén el token → `POST /auth/login` (username + password en form-data)
+3. Haz clic en **Authorize 🔒** (arriba a la derecha) y pega el token
+
+El token expira en `{expire}` minutos (configurable con `JWT_EXPIRATION_MINUTES`).
+
+---
+
+### Seguridad de credenciales
+
+- Contraseñas hasheadas con **bcrypt**.
+- Bloqueo temporal tras **{max_attempts}** intentos fallidos consecutivos.
+- Todos los registros incluyen `creado_por` con el username del usuario autenticado.
+""".format(
+    expire=30,
+    max_attempts=5,
+)
+
+_TAGS = [
+    {
+        "name": "Autenticación",
+        "description": "Registro de usuarios y obtención de JWT. "
+                       "**El token obtenido aquí se usa en el botón Authorize 🔒.**",
+    },
+    {
+        "name": "Clientes",
+        "description": "Alta de clientes. Un cliente puede tener varias pólizas activas simultáneamente.",
+    },
+    {
+        "name": "Polizas",
+        "description": "Emisión de pólizas con beneficiarios y consulta de estado (al día / en mora / pendiente).",
+    },
+    {
+        "name": "Pagos",
+        "description": "Registro de pagos parciales o totales. Soporta idempotencia mediante `clave_idempotencia`.",
+    },
+    {
+        "name": "Reportes",
+        "description": "Cartera vencida: pólizas con saldo pendiente y más de 30 días de mora.",
+    },
+    {
+        "name": "Health",
+        "description": "Verificación de disponibilidad del servicio.",
+    },
+]
+
 app = FastAPI(
-    title="Prueba Técnica — Gestión de Pólizas",
-    description="API REST para gestionar clientes, pólizas y pagos. Documentación automática con Swagger (OpenAPI).",
-    version="0.1.0",
-    contact={"name": "Autor", "email": "tu@ejemplo.com"},
+    title="Gestión de Pólizas",
+    description=_DESCRIPTION,
+    version="1.0.0",
+    contact={"name": "Jair Barreto", "email": "jairbarreto23@gmail.com"},
     license_info={"name": "MIT"},
+    openapi_tags=_TAGS,
 )
 
 

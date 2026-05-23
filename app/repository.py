@@ -58,7 +58,9 @@ class ClientesRepository:
     def create(self, payload: Dict) -> Dict:
         stmt = insert(clientes).values(**payload).returning(*clientes.c)
         row = self.conn.execute(stmt).mappings().first()
-        return dict(row) if row else {}
+        if row is None:
+            raise RuntimeError("INSERT de cliente no devolvió la fila creada")
+        return dict(row)
 
     def get_by_id(self, cliente_id: int) -> Optional[Dict]:
         stmt = select(clientes).where(clientes.c.id == cliente_id)
@@ -117,7 +119,7 @@ class PolizasRepository:
         val = self.conn.execute(stmt).scalar_one()
         return Decimal(val)
 
-    def get_ultimo_pago(self, poliza_id: int) -> Optional[str]:
+    def get_ultimo_pago(self, poliza_id: int) -> Optional[datetime]:
         stmt = select(func.max(pagos.c.fecha_pago)).where(pagos.c.poliza_id == poliza_id)
         return self.conn.execute(stmt).scalar_one()
 

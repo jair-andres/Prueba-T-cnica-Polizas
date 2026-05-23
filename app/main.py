@@ -4,6 +4,7 @@ from typing import Dict
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import HTTPException, RequestValidationError
+from sqlalchemy.exc import IntegrityError
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -145,9 +146,16 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
     )
 
 
+@app.exception_handler(IntegrityError)
+async def integrity_error_handler(request: Request, exc: IntegrityError) -> JSONResponse:
+    """IntegrityErrors no capturados en el service → 409 genérico sin exponer SQL."""
+    logger.warning("IntegrityError en %s: %s", request.url.path, exc.orig)
+    return _error_response(status_code=409, message="Conflicto de datos: ya existe un registro con esos valores")
+
+
 @app.exception_handler(SQLAlchemyError)
 async def sqlalchemy_error_handler(request: Request, exc: SQLAlchemyError) -> JSONResponse:
-    """Devuelve errores de base de datos como JSON en lugar de HTML."""
+    """Errores de base de datos inesperados → 500. No expone detalles internos."""
     logger.error("Error de base de datos en %s: %s", request.url.path, str(exc))
     return _error_response(
         status_code=500,

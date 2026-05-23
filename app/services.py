@@ -24,13 +24,38 @@ class ClienteService:
     def create_cliente(self, payload: ClienteCreate, created_by: Optional[str] = None) -> ClienteResponse:
         existing = self.repo.get_by_documento(payload.documento)
         if existing is not None:
-            raise HTTPException(status_code=400, detail="El documento ya está registrado")
+            raise HTTPException(status_code=409, detail="El documento ya está registrado")
         data = payload.model_dump()
         if created_by:
             data["creado_por"] = created_by
             data["actualizado_por"] = created_by
-        row = self.repo.create(data)
+        try:
+            row = self.repo.create(data)
+        except IntegrityError as exc:
+            constraint = getattr(getattr(exc.orig, "diag", None), "constraint_name", "") or ""
+            if "documento" in constraint:
+                raise HTTPException(status_code=409, detail="El documento ya está registrado")
+            raise HTTPException(status_code=409, detail="Conflicto de datos al crear el cliente")
         return ClienteResponse(**row)
+
+
+def _poliza_integrity_error(exc: IntegrityError) -> HTTPException:
+    """Traduce una IntegrityError de PostgreSQL a un HTTPException 409 con mensaje claro.
+    Inspecciona el constraint_name para dar mensajes específicos sin exponer SQL al cliente."""
+    constraint: str = ""
+    try:
+        constraint = exc.orig.diag.constraint_name or ""
+    except AttributeError:
+        constraint = str(exc.orig)
+
+    if "numero_poliza" in constraint:
+        return HTTPException(status_code=409, detail="El número de póliza ya existe")
+    if "beneficiarios_documento" in constraint or "beneficiarios_pkey" in constraint:
+        return HTTPException(status_code=409, detail="Un beneficiario con ese documento ya existe en el sistema")
+    if "poliza_beneficiarios_pkey" in constraint:
+        return HTTPException(status_code=409, detail="El beneficiario ya está asociado a esta póliza")
+    # Violación de constraint no mapeada: 409 genérico sin exponer detalles internos
+    return HTTPException(status_code=409, detail="Conflicto de datos: ya existe un registro con esos valores")
 
 
 class PolizaService:
@@ -64,7 +89,11 @@ class PolizaService:
                 b["creado_por"] = created_by
                 b["actualizado_por"] = created_by
 
-        poliza = self.polizas.create(poliza_data, benefs)
+        try:
+            poliza = self.polizas.create(poliza_data, benefs)
+        except IntegrityError as exc:
+            raise _poliza_integrity_error(exc)
+
         return PolizaResponse(
             id=poliza["id"],
             cliente_id=poliza["cliente_id"],

@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.engine import Connection
+from sqlalchemy.exc import IntegrityError
 
 from ..auth import create_access_token, hash_password, verify_password
 from ..config import settings
@@ -47,7 +48,15 @@ def register(payload: UserCreate, conn: Connection = Depends(_get_conn)):
         raise HTTPException(status_code=400, detail="El correo ya está registrado")
 
     hashed = hash_password(payload.password)
-    user = repo.create(payload.username, payload.email, hashed)
+    try:
+        user = repo.create(payload.username, payload.email, hashed)
+    except IntegrityError as exc:
+        constraint = getattr(getattr(exc.orig, "diag", None), "constraint_name", "") or ""
+        if "username" in constraint:
+            raise HTTPException(status_code=409, detail="El nombre de usuario ya existe")
+        if "email" in constraint:
+            raise HTTPException(status_code=409, detail="El correo ya está registrado")
+        raise HTTPException(status_code=409, detail="El usuario ya existe")
     logger.info("Usuario registrado: username=%s", payload.username)
     return {"status": "success", "data": UserResponse(**user)}
 

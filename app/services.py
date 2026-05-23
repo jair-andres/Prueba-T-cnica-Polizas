@@ -139,23 +139,18 @@ class PagoService:
         self.pagos = PagosRepository(conn)
 
     def create_pago(self, poliza_id: int, payload: PagoCreate, created_by: Optional[str] = None) -> PagoResponse:
-        # ── 1. Fast path: idempotencia sin lock (evita contención innecesaria) ──
+        # Fast path: checar idempotencia antes del lock para evitar contención
         if payload.clave_idempotencia:
             existing = self.pagos.get_by_idempotency(poliza_id, payload.clave_idempotencia)
             if existing is not None:
                 return PagoResponse(**existing)
 
-        # ── 2. FOR UPDATE: serializa requests concurrentes sobre la misma póliza ──
-        # lock_timeout evita que el segundo request quede bloqueado indefinidamente
-        # si otro está procesando un pago simultáneo sobre la misma póliza.
+        # FOR UPDATE serializa pagos simultáneos; lock_timeout evita bloqueos indefinidos
         try:
             self.conn.execute(text("SET LOCAL lock_timeout = '5s'"))
             poliza = self.polizas.get_by_id_for_update(poliza_id)
         except OperationalError:
-            raise HTTPException(
-                status_code=503,
-                detail="Hay otro pago en proceso para esta póliza. Intenta en unos segundos.",
-            )
+            raise HTTPException(503, "Hay otro pago en proceso para esta póliza. Intenta en unos segundos.")
 
         if poliza is None:
             raise HTTPException(status_code=404, detail="Póliza no encontrada")
@@ -163,15 +158,13 @@ class PagoService:
         if poliza.get("estado") != "activa":
             raise HTTPException(status_code=400, detail="No se pueden registrar pagos en una póliza que no está activa")
 
-        # ── 3. Re-check idempotencia tras el lock ──
-        # Cubre el caso donde dos requests con la misma clave llegaron simultáneos:
-        # el segundo llega aquí y encuentra el pago que el primero ya insertó.
+        # Re-check post-lock: cubre el caso donde dos requests con la misma clave
+        # llegaron simultáneos y el primero ya insertó mientras el segundo esperaba.
         if payload.clave_idempotencia:
             existing = self.pagos.get_by_idempotency(poliza_id, payload.clave_idempotencia)
             if existing is not None:
                 return PagoResponse(**existing)
 
-        # ── 4. Saldo consistente (lectura segura porque tenemos el lock) ──
         total_pagado = self.polizas.get_total_pagado(poliza_id)
         saldo_pendiente = poliza["prima_total"] - total_pagado
         if payload.monto > saldo_pendiente:
@@ -179,8 +172,6 @@ class PagoService:
                 status_code=400,
                 detail=f"El monto ({payload.monto}) excede el saldo pendiente ({saldo_pendiente})",
             )
-
-        # ── 5. Insertar ──
         pago_data = payload.model_dump(exclude_unset=True)
         if created_by:
             pago_data["creado_por"] = created_by

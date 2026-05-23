@@ -9,11 +9,9 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, StringConstraints, 
 
 T = TypeVar("T")
 
-# ── Tipos reutilizables ────────────────────────────────────────────────────────
 Money = Annotated[Decimal, Field(max_digits=12, decimal_places=2, gt=Decimal("0"))]
 
 
-# ── Auth ──────────────────────────────────────────────────────────────────────
 
 class UserBase(BaseModel):
     username: Annotated[str, StringConstraints(min_length=3, max_length=255)]
@@ -72,7 +70,6 @@ class TokenData(BaseModel):
     username: Optional[str] = None
 
 
-# ── Respuestas estándar ────────────────────────────────────────────────────────
 
 class StandardResponse(BaseModel, Generic[T]):
     """Estructura única de respuesta para todos los endpoints."""
@@ -92,7 +89,6 @@ class ErrorResponse(BaseModel):
     errors: Optional[List[ErrorDetail]] = None
 
 
-# ── Clientes ──────────────────────────────────────────────────────────────────
 
 class ClienteCreate(BaseModel):
     nombre: Annotated[str, StringConstraints(min_length=1, max_length=255)]
@@ -105,7 +101,6 @@ class ClienteResponse(ClienteCreate):
     creado_en: datetime
 
 
-# ── Pólizas ───────────────────────────────────────────────────────────────────
 
 class BeneficiarioCreate(BaseModel):
     nombre: Annotated[str, StringConstraints(min_length=1, max_length=255)]
@@ -151,7 +146,6 @@ class PolizaResponse(BaseModel):
     beneficiarios: List[BeneficiarioResponse]
 
 
-# ── Pagos ─────────────────────────────────────────────────────────────────────
 
 class PagoCreate(BaseModel):
     monto: Money
@@ -175,7 +169,6 @@ class PagoResponse(BaseModel):
     creado_en: datetime
 
 
-# ── Estado y reportes ─────────────────────────────────────────────────────────
 
 class PolizaEstadoResponse(BaseModel):
     poliza_id: int

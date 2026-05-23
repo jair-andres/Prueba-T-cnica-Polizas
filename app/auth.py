@@ -22,20 +22,18 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
-    to_encode = data.copy()
-    expire = datetime.now(timezone.utc) + (
+    payload = data.copy()
+    payload["exp"] = datetime.now(timezone.utc) + (
         expires_delta or timedelta(minutes=settings.jwt_expire_minutes)
     )
-    to_encode["exp"] = expire
-    return jwt.encode(to_encode, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
 def get_current_user(
     token: str = Depends(oauth2_scheme),
     conn: Connection = Depends(get_connection),
 ) -> dict:
-    """Dependencia que valida el JWT y devuelve el usuario activo."""
-    credentials_exc = HTTPException(
+    exc = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="No se pudieron validar las credenciales",
         headers={"WWW-Authenticate": "Bearer"},
@@ -43,14 +41,13 @@ def get_current_user(
     try:
         payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
         username: str = payload.get("sub")
-        if username is None:
-            raise credentials_exc
+        if not username:
+            raise exc
     except JWTError:
-        raise credentials_exc
+        raise exc
 
     from .repository import UsersRepository
-
     user = UsersRepository(conn).get_by_username(username)
-    if user is None or not user["is_active"]:
-        raise credentials_exc
+    if not user or not user["is_active"]:
+        raise exc
     return user

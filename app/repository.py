@@ -78,8 +78,6 @@ class PolizasRepository:
         self.conn = conn
 
     def create(self, payload: Dict, beneficiarios_payload: List[Dict]) -> Dict:
-        # La transacción ya está abierta por engine.begin() en get_connection().
-        # No se abre una nueva — todo cae en el mismo commit/rollback del request.
         stmt = insert(polizas).values(**payload).returning(*polizas.c)
         pol_row = self.conn.execute(stmt).mappings().first()
         pol_id = pol_row["id"]

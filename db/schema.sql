@@ -1,6 +1,21 @@
 -- db/schema.sql
 -- Modelo completo y corregido de la base de datos para el MVP de pólizas.
 
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    username VARCHAR(255) NOT NULL UNIQUE,
+    email VARCHAR(255) NOT NULL UNIQUE,
+    hashed_password VARCHAR(255) NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    is_superuser BOOLEAN NOT NULL DEFAULT FALSE,
+    login_attempts INTEGER NOT NULL DEFAULT 0,
+    last_login_attempt TIMESTAMP WITH TIME ZONE,
+    creado_en TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    creado_por VARCHAR(255),
+    actualizado_en TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    actualizado_por VARCHAR(255)
+);
+
 CREATE TABLE clientes (
     id SERIAL PRIMARY KEY,
     nombre VARCHAR(255) NOT NULL,
